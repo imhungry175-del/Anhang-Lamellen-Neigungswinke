@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lichtkegel-Messung (8-Punkte-Ausgleichskreis)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
+        h1 { color: #0056b3; margin-bottom: 5px; }
+        .subtitle { color: #666; margin-bottom: 20px; }
+        
+        .main-layout { display: grid; grid-template-columns: 1fr 420px; gap: 20px; }
+        .left-panel, .right-panel { display: flex; flex-direction: column; gap: 15px; }
+
+        .controls { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        input[type="number"], input[type="file"] { padding: 6px; margin: 4px 0; border: 1px solid #ccc; border-radius: 4px; width: 80%; }
+        
+        #media-wrapper { 
+            position: relative; 
+            display: inline-block; 
+            align-self: flex-start;
+            border: 1px solid #ccc; 
+            max-width: 100%; 
+        }
+        #sourceImage { display: block; max-width: 100%; height: auto; cursor: crosshair; }
+        #overlayCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+        .step { margin-bottom: 10px; padding: 5px; border-left: 4px solid #0056b3; padding-left: 10px; }
+        
+        button { padding: 8px 12px; border: none; background: #0056b3; color: white; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: 5px; }
+        button:hover { background: #004085; }
+        button.btn-success { background: #28a745; }
+        button.btn-success:hover { background: #218838; }
+        button.btn-danger { background: #dc3545; }
+
+        /* Mathematische Box im verständlichen Mathe-Format */
+        .math-box { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .math-box h3 { margin-top: 0; color: #0056b3; font-size: 1.05em; border-bottom: 2px solid #0056b3; padding-bottom: 5px; }
+        .math-step { font-size: 0.88em; margin-bottom: 12px; line-height: 1.4; }
+        .formula-card { 
+            font-family: 'Times New Roman', Times, serif; 
+            font-size: 1.05em;
+            background: #f8f9fa; 
+            padding: 8px 12px; 
+            border-radius: 6px; 
+            border-left: 3px solid #0056b3; 
+            margin: 6px 0; 
+            color: #111;
+        }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: white; font-size: 0.9em; }
+        th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+        th { background-color: #0056b3; color: white; }
+    </style>
+</head>
+<body>
+
+    <h1>Lichtkegel-Divergenz (8-Punkte-Ausgleichskreis)</h1>
+    <div class="subtitle">Präzise Auswertung über Ausgleichsrechnung (Methode der kleinsten Quadrate)</div>
+    
+    <div class="main-layout">
+        <div class="left-panel">
+            <div class="controls">
+                <div class="step">
+                    <strong>1. Bild & Abstand laden:</strong><br>
+                    <input type="file" id="upload" accept="image/*"><br>
+                    Abstand zur Lichtquelle (z): <input type="number" id="distZ" value="22" style="width:70px;"> cm
+                </div>
+                
+                <div class="step">
+                    <strong>2. Papier-Rastermaße (mm):</strong><br>
+                    Breite (X): <input type="number" id="realWidth" value="100" style="width:70px;"> mm | 
+                    Höhe (Y): <input type="number" id="realHeight" value="100" style="width:70px;"> mm
+                </div>
+
+                <div class="step">
+                    <strong>Status / Anweisung:</strong><br>
+                    <span id="instruction" style="color: blue; font-weight: bold;">Bitte zuerst Bild hochladen</span>
+                    <div style="margin-top: 8px;">
+                        <button onclick="resetCalibration()" class="btn-danger">Kamera neu kalibrieren</button>
+                        <button onclick="resetCirclePoints()">Punkte zurücksetzen</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="media-wrapper">
+                <img id="sourceImage" style="display:none;">
+                <canvas id="overlayCanvas"></canvas>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <!-- Verständliche mathematische Dokumentation -->
+            <div class="math-box">
+                <h3>Mathematische Berechnung</h3>
+                
+                <div class="math-step">
+                    <strong>1. Allgemeine Kreisgleichung:</strong>
+                    <div class="formula-card">(x - x<sub>m</sub>)<sup>2</sup> + (y - y<sub>m</sub>)<sup>2</sup> = r<sup>2</sup></div>
+                    Durch Ausmultiplizieren entsteht die linearisierte Form:
+                    <div class="formula-card">x<sup>2</sup> + y<sup>2</sup> + a·x + b·y + c = 0</div>
+                    <small style="color:#555;">wobei: a = -2·x<sub>m</sub>, &nbsp; b = -2·y<sub>m</sub>, &nbsp; c = x<sub>m</sub><sup>2</sup> + y<sub>m</sub><sup>2</sup> - r<sup>2</sup></small>
+                </div>
+
+                <div class="math-step">
+                    <strong>2. Ausgleichsrechnung (Least Squares):</strong><br>
+                    Für alle 8 Messpunkte wird der mathematische Abstand minimiert:
+                    <div class="formula-card">a·x<sub>i</sub> + b·y<sub>i</sub> + c = -(x<sub>i</sub><sup>2</sup> + y<sub>i</sub><sup>2</sup>)</div>
+                </div>
+
+                <div class="math-step">
+                    <strong>3. Bestimmung der Geometriegrößen:</strong>
+                    <div class="formula-card">
+                        Mittelpunkt: x<sub>m</sub> = -a / 2, &nbsp; y<sub>m</sub> = -b / 2<br>
+                        Radius: r = √(x<sub>m</sub><sup>2</sup> + y<sub>m</sub><sup>2</sup> - c)<br>
+                        <strong>Durchmesser:</strong> D = 2 · r<br>
+                        <strong>Umfang:</strong> U = π · D
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ergebnisse (Ausschließlich Durchmesser und Umfang) -->
+            <div id="result-box" class="controls" style="display:none;">
+                <strong>Ergebnis des Ausgleichskreises:</strong>
+                <div id="current-meas-output" style="margin-top:8px; line-height: 1.6;"><em>Setze 8 Punkte auf den Rand.</em></div>
+                <button id="save-btn" onclick="saveMeasurement()" class="btn-success" style="display:none; margin-top:10px; width:100%;">Messwert speichern</button>
+            </div>
+
+            <div class="controls">
+                <strong>Messreihen-Übersicht:</strong>
+                <table id="meas-table">
+                    <thead>
+                        <tr>
+                            <th>z (cm)</th>
+                            <th>D_gemittelt (mm)</th>
+                            <th>Aktion</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+                <div id="divergence-summary" style="margin-top:10px; font-weight:bold; color:#28a745;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const upload = document.getElementById('upload');
+        const img = document.getElementById('sourceImage');
+        const canvas = document.getElementById('overlayCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const instruction = document.getElementById('instruction');
+        const resultBox = document.getElementById('result-box');
+        const currentMeasOutput = document.getElementById('current-meas-output');
+        const saveBtn = document.getElementById('save-btn');
+        const measTableBody = document.querySelector('#meas-table tbody');
+        const divergenceSummary = document.getElementById('divergence-summary');
+
+        const TARGET_POINTS = 8;
+        let srcPoints = [];
+        let circleImgPoints = []; 
+        let circleRealPoints = []; 
+        let currentCircleResult = null;
+        let homographyMatrix = null;
+        let measurements = [];
+
+        const labels = ["OBEN-LINKS", "OBEN-RECHTS", "UNTEN-RECHTS", "UNTEN-LINKS"];
+
+        upload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        img.style.display = 'block';
+                        syncCanvasSize();
+                        resetCirclePoints();
+
+                        if (homographyMatrix) {
+                            instruction.innerText = `Bemaßung aktiv! Setze ${TARGET_POINTS} Punkte auf den Rand.`;
+                            instruction.style.color = "green";
+                            resultBox.style.display = "block";
+                        } else {
+                            instruction.innerText = "Bitte zuerst Punkt OBEN-LINKS des Papierrasters anklicken.";
+                            instruction.style.color = "blue";
+                        }
+                    };
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        window.addEventListener('resize', syncCanvasSize);
+
+        function syncCanvasSize() {
+            if (img.naturalWidth) {
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                redrawCanvas();
+            }
+        }
+
+        img.addEventListener('click', (e) => {
+            const rect = img.getBoundingClientRect();
+            const scaleX = img.naturalWidth / rect.width;
+            const scaleY = img.naturalHeight / rect.height;
+            
+            const xImg = (e.clientX - rect.left) * scaleX;
+            const yImg = (e.clientY - rect.top) * scaleY;
+
+            if (srcPoints.length < 4) {
+                srcPoints.push({ x: xImg, y: yImg });
+                redrawCanvas();
+
+                if (srcPoints.length < 4) {
+                    instruction.innerText = `Kalibrierung: Bitte ${labels[srcPoints.length]} anklicken.`;
+                } else {
+                    instruction.innerText = `Kalibriert! Setze jetzt ${TARGET_POINTS} Punkte auf den Rand.`;
+                    instruction.style.color = "green";
+                    calculateTransformation();
+                    resultBox.style.display = "block";
+                }
+            } 
+            else if (circleImgPoints.length < TARGET_POINTS) {
+                const realPt = transformPoint(xImg, yImg, homographyMatrix);
+                circleImgPoints.push({ x: xImg, y: yImg });
+                circleRealPoints.push(realPt);
+
+                if (circleImgPoints.length < TARGET_POINTS) {
+                    instruction.innerText = `Punkte auf Rand: ${circleImgPoints.length} von ${TARGET_POINTS} gesetzt.`;
+                } else {
+                    instruction.innerText = "Ausgleichskreis berechnet!";
+                    evaluateCircle();
+                }
+                redrawCanvas();
+            }
+        });
+
+        function evaluateCircle() {
+            const fitImg = fitCircleLeastSquares(circleImgPoints);
+            const fitReal = fitCircleLeastSquares(circleRealPoints);
+
+            if (!fitImg || !fitReal) {
+                currentMeasOutput.innerHTML = `<span style="color:red;">Fehler beim Berechnen des Ausgleichskreises.</span>`;
+                return;
+            }
+
+            currentCircleResult = { fitImg, fitReal };
+
+            const diameter = fitReal.d;
+            const circumference = Math.PI * diameter;
+
+            currentMeasOutput.innerHTML = `
+                <strong>Durchmesser (D):</strong> <span style="color:#0056b3; font-size:1.1em;">${diameter.toFixed(2)} mm</span><br>
+                <strong>Umfang (U):</strong> <span style="color:#0056b3; font-size:1.1em;">${circumference.toFixed(2)} mm</span>
+            `;
+            saveBtn.style.display = "block";
+        }
+
+        function redrawCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (!img.naturalWidth) return;
+
+            const rMarker = Math.max(4, Math.round(img.naturalWidth / 250));
+            const lineWidth = Math.max(2, Math.round(img.naturalWidth / 500));
+
+            // 1. Kalibrierpunkte (Rot)
+            srcPoints.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, rMarker, 0, 2 * Math.PI);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = lineWidth / 2;
+                ctx.stroke();
+            });
+
+            // 2. Messpunkte (Orange)
+            circleImgPoints.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, rMarker, 0, 2 * Math.PI);
+                ctx.fillStyle = '#fd7e14';
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = lineWidth / 2;
+                ctx.stroke();
+            });
+
+            // 3. Ausgleichskreis (Grün)
+            if (currentCircleResult && currentCircleResult.fitImg) {
+                const fit = currentCircleResult.fitImg;
+
+                ctx.beginPath();
+                ctx.arc(fit.xc, fit.yc, fit.r, 0, 2 * Math.PI);
+                ctx.strokeStyle = '#28a745';
+                ctx.lineWidth = lineWidth;
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(fit.xc, fit.yc, rMarker * 0.7, 0, 2 * Math.PI);
+                ctx.fillStyle = '#28a745';
+                ctx.fill();
+            }
+        }
+
+        function fitCircleLeastSquares(pts) {
+            const n = pts.length;
+            if (n < 3) return null;
+
+            let sX = 0, sY = 0, sX2 = 0, sY2 = 0, sXY = 0;
+            let sXZ = 0, sYZ = 0, sZ = 0;
+
+            for (let i = 0; i < n; i++) {
+                const x = pts[i].x;
+                const y = pts[i].y;
+                const z = -(x * x + y * y);
+
+                sX += x; sY += y;
+                sX2 += x * x; sY2 += y * y;
+                sXY += x * y;
+                sZ += z; sXZ += x * z; sYZ += y * z;
+            }
+
+            const M = [
+                [sX2, sXY, sX],
+                [sXY, sY2, sY],
+                [sX,  sY,  n ]
+            ];
+            const Y = [sXZ, sYZ, sZ];
+
+            const sol = solve3x3(M, Y);
+            if (!sol) return null;
+
+            const a = sol[0], b = sol[1], c = sol[2];
+            const xc = -a / 2;
+            const yc = -b / 2;
+            const r2 = xc * xc + yc * yc - c;
+            if (r2 <= 0) return null;
+
+            return { xc, yc, r: Math.sqrt(r2), d: 2 * Math.sqrt(r2) };
+        }
+
+        function solve3x3(A, B) {
+            function det3(m) {
+                return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+                     - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                     + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+            }
+
+            const d = det3(A);
+            if (Math.abs(d) < 1e-9) return null;
+
+            const A0 = [
+                [B[0], A[0][1], A[0][2]],
+                [B[1], A[1][1], A[1][2]],
+                [B[2], A[2][1], A[2][2]]
+            ];
+            const A1 = [
+                [A[0][0], B[0], A[0][2]],
+                [A[1][0], B[1], A[1][2]],
+                [A[2][0], B[2], A[2][2]]
+            ];
+            const A2 = [
+                [A[0][0], A[0][1], B[0]],
+                [A[1][0], A[1][1], B[1]],
+                [A[2][0], A[2][1], B[2]]
+            ];
+
+            return [det3(A0) / d, det3(A1) / d, det3(A2) / d];
+        }
+
+        function saveMeasurement() {
+            const zVal = parseFloat(document.getElementById('distZ').value);
+            if (!currentCircleResult) return;
+
+            measurements.push({ z: zVal, D: currentCircleResult.fitReal.d });
+            measurements.sort((a, b) => a.z - b.z);
+            
+            updateTable();
+            calculateDivergence();
+            resetCirclePoints();
+        }
+
+        function updateTable() {
+            measTableBody.innerHTML = '';
+            measurements.forEach((m, index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${m.z} cm</td>
+                    <td>${m.D.toFixed(2)} mm</td>
+                    <td><button onclick="removeMeasurement(${index})" class="btn-danger" style="padding:2px 6px; font-size:0.8em;">X</button></td>
+                `;
+                measTableBody.appendChild(row);
+            });
+        }
+
+        function removeMeasurement(index) {
+            measurements.splice(index, 1);
+            updateTable();
+            calculateDivergence();
+        }
+
+        function calculateDivergence() {
+            if (measurements.length < 2) {
+                divergenceSummary.innerHTML = "<em>Mindestens 2 Messpunkte nötig.</em>";
+                return;
+            }
+
+            const pFirst = measurements[0];
+            const pLast = measurements[measurements.length - 1];
+
+            const deltaD = pLast.D - pFirst.D;
+            const deltaZ = pLast.z - pFirst.z;
+            const deltaZ_mm = deltaZ * 10;
+
+            const ratePerCm = deltaD / deltaZ;
+            const alphaRad = 2 * Math.atan(deltaD / (2 * deltaZ_mm));
+            const alphaDeg = alphaRad * (180 / Math.PI);
+
+            divergenceSummary.innerHTML = `
+                <div style="background:#e8f5e9; padding:8px; border-radius:5px; border:1px solid #c8e6c9;">
+                    <strong>Ergebnis der Licht-Divergenz:</strong><br>
+                    • Aufweitung: <strong>${ratePerCm.toFixed(2)} mm / cm</strong><br>
+                    • Divergenzwinkel (α): <strong>${alphaDeg.toFixed(2)}°</strong>
+                </div>
+            `;
+        }
+
+        function resetCirclePoints() {
+            circleImgPoints = [];
+            circleRealPoints = [];
+            currentCircleResult = null;
+            saveBtn.style.display = "none";
+            redrawCanvas();
+            if (homographyMatrix) {
+                instruction.innerText = `Klicke ${TARGET_POINTS} Punkte auf den Rand.`;
+                instruction.style.color = "green";
+                currentMeasOutput.innerHTML = `<em>Setze ${TARGET_POINTS} Punkte auf den Rand.</em>`;
+            }
+        }
+
+        function resetCalibration() {
+            srcPoints = [];
+            homographyMatrix = null;
+            resetCirclePoints();
+            instruction.innerText = "Neu-Kalibrierung: Bitte OBEN-LINKS anklicken.";
+            instruction.style.color = "blue";
+            resultBox.style.display = "none";
+        }
+
+        function calculateTransformation() {
+            const W = parseFloat(document.getElementById('realWidth').value);
+            const H = parseFloat(document.getElementById('realHeight').value);
+
+            const dstPoints = [
+                {x: 0, y: 0},
+                {x: W, y: 0},
+                {x: W, y: H},
+                {x: 0, y: H}
+            ];
+
+            homographyMatrix = solveHomography(srcPoints, dstPoints);
+        }
+
+        function solveHomography(src, dst) {
+            let A = [];
+            for(let i=0; i<4; i++) {
+                let x = src[i].x, y = src[i].y;
+                let X = dst[i].x, Y = dst[i].y;
+                A.push([x, y, 1, 0, 0, 0, -x*X, -y*X, X]);
+                A.push([0, 0, 0, x, y, 1, -x*Y, -y*Y, Y]);
+            }
+            let n = 8;
+            for (let i=0; i<n; i++) {
+                let maxEl = Math.abs(A[i][i]), maxRow = i;
+                for (let k=i+1; k<n; k++) {
+                    if (Math.abs(A[k][i]) > maxEl) { maxEl = Math.abs(A[k][i]); maxRow = k; }
+                }
+                let tmp = A[maxRow]; A[maxRow] = A[i]; A[i] = tmp;
+                for (let k=i+1; k<n; k++) {
+                    let c = -A[k][i]/A[i][i];
+                    for (let j=i; j<=n; j++) {
+                        if (i==j) A[k][j] = 0;
+                        else A[k][j] += c * A[i][j];
+                    }
+                }
+            }
+            let h = new Array(n);
+            for (let i=n-1; i>=0; i--) {
+                h[i] = A[i][n]/A[i][i];
+                for (let k=i-1; k>=0; k--) { A[k][n] -= A[k][i] * h[i]; }
+            }
+            return h;
+        }
+
+        function transformPoint(x, y, h) {
+            let d = h[6]*x + h[7]*y + 1;
+            return {
+                x: (h[0]*x + h[1]*y + h[2]) / d,
+                y: (h[3]*x + h[4]*y + h[5]) / d
+            };
+        }
+    </script>
+</body>
+</html>
