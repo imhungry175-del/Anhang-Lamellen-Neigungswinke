@@ -1,1 +1,0 @@
-# Anhang-Lamellen-Neigungswinke
